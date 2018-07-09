@@ -1,0 +1,75 @@
+#!/usr/bin/env ruby_executable_hooks
+#
+
+require 'net/http'
+
+version = ">= 0.a"
+
+website_url = ARGV[0]
+keyword = ARGV[1] || "hello" # default keyword
+max_depth = ARGV[2] || 2 # default depth
+
+def get_source_code_for(url)
+  begin
+    uri = URI(url)
+    Net::HTTP.start(uri.host, uri.port, :use_ssl => uri.scheme == 'https') do |http|
+      request = Net::HTTP::Get.new uri
+      response = http.request request
+      response.body
+    end
+  rescue Exception => e
+    "" # Return empty string
+  end
+end
+
+def extract_content(source_code)
+  source_code.gsub(/<style>.*?[\s]*[\w\W]*[\d]*<\/style>/, '')
+  source_code.gsub(/<script>.*?[\s]*[\w\W]*[\d]*<\/script>/, '')
+  source_code.gsub(/<\/?[^>]*>/, '')
+end
+
+def get_links(source_code)
+  source_code.scan(/<a.*?+<\/a>/).map do | link |
+    link = link.gsub(/\'/, '"')
+    match_data = link.match(/href\s*=\s*"([^"]*)"/)
+    if match_data
+      match_data.eql?('#') ? nil : match_data[1]
+    end
+  end
+  .compact
+end
+
+links_crawled = []
+depth = 0
+keyword_matching_data = []
+
+links = [ website_url ]
+
+while(links.count > 0 && depth <= max_depth) do
+  new_links = [];
+  links.each do | link |
+    source_code = get_source_code_for(link)
+    matches = extract_content(source_code).scan(/.{10}(?:#{Regexp.quote(keyword)}).{10}/i)
+    if matches.any?
+      keyword_matching_data.push({ link: link, matches: matches.map(&:to_s) })
+    end
+
+    new_links.concat(get_links(source_code))
+    links_crawled.push(link);
+  end
+  links = new_links;
+  depth += 1;
+end
+
+keyword_matching_count = keyword_matching_data.inject(0) do | acc, item |
+  acc + item[:matches].count
+end
+
+puts 'Crawled ' + links_crawled.count.to_s + ' pages'
+puts 'Found ' + keyword_matching_count.to_s + ' matches with the term ' + keyword
+keyword_matching_data.each do | item |
+  item[:matches].each do | match |
+    puts item[:link] + '=>' + match
+  end
+end
+
